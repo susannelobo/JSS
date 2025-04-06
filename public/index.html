@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Notebook App</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <header>
+      <h1>AI Notebook</h1>
+      <p>Chat with AI and ask questions about your documents</p>
+    </header>
+    
+    <main>
+      <div class="sidebar">
+        <div class="file-upload-section">
+          <h2>Upload Files</h2>
+          <form id="file-upload-form">
+            <div class="file-drop-area">
+              <span class="fake-btn">Choose files</span>
+              <span class="file-msg">or drag and drop files here</span>
+              <input class="file-input" type="file" name="file">
+            </div>
+            <button type="submit" class="upload-btn">Upload</button>
+          </form>
+          
+          <div class="files-list">
+            <h3>Your Files</h3>
+            <ul id="uploaded-files-list"></ul>
+          </div>
+        </div>
+      </div>
+      
+      <div class="chat-container">
+        <div class="chat-messages" id="chat-messages">
+          <div class="message system">
+            How can I help you today? You can chat with me directly or upload documents to ask questions about them.
+          </div>
+        </div>
+        
+        <div class="chat-input-area">
+          <div class="mode-selector">
+            <label>
+              <input type="radio" name="chat-mode" value="general" checked> General Chat
+            </label>
+            <label>
+              <input type="radio" name="chat-mode" value="document"> Document Q&A
+            </label>
+          </div>
+          
+          <form id="chat-form">
+            <input type="text" id="chat-input" placeholder="Type your message here...">
+            <button type="submit">Send</button>
+          </form>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    $(document).ready(function() {
+      // Generate a unique session ID
+      const sessionId = Date.now().toString();
+      let documentContext = '';
+      let chatMode = 'general';
+      
+      // Load existing files (if any)
+      loadFiles();
+      
+      // File upload handling
+      $('.file-drop-area').on('dragover', function(e) {
+        e.preventDefault();
+        $(this).addClass('active');
+      });
+      
+      $('.file-drop-area').on('dragleave', function() {
+        $(this).removeClass('active');
+      });
+      
+      $('.file-drop-area').on('drop', function(e) {
+        e.preventDefault();
+        $(this).removeClass('active');
+        
+        if (e.originalEvent.dataTransfer.files.length) {
+          $('.file-input')[0].files = e.originalEvent.dataTransfer.files;
+          $('.file-msg').text(`${e.originalEvent.dataTransfer.files.length} file(s) selected`);
+        }
+      });
+      
+      $('.file-input').on('change', function() {
+        if (this.files.length) {
+          $('.file-msg').text(`${this.files.length} file(s) selected`);
+        } else {
+          $('.file-msg').text('or drag and drop files here');
+        }
+      });
+      
+      $('#file-upload-form').on('submit', function(e) {
+        e.preventDefault();
+        
+        const fileInput = $('.file-input')[0];
+        if (!fileInput.files.length) return;
+        
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        
+        $.ajax({
+          url: '/files/upload',
+          type: 'POST',
+          data: formData,
+          processData: false,
+          contentType: false,
+          success: function(data) {
+            // Clear file input
+            $('#file-upload-form')[0].reset();
+            $('.file-msg').text('or drag and drop files here');
+            
+            // Reload files list
+            loadFiles();
+            
+            // Show success message
+            addMessage('File uploaded successfully: ' + data.filename, 'system');
+            
+            // Update document context
+            getDocumentContext();
+          },
+          error: function(err) {
+            console.error('Upload error:', err);
+            addMessage('Failed to upload file. Please try again.', 'system error');
+          }
+        });
+      });
+      
+      // Chat mode selector
+      $('input[name="chat-mode"]').on('change', function() {
+        chatMode = $(this).val();
+        
+        if (chatMode === 'document' && !documentContext) {
+          getDocumentContext();
+        }
+      });
+      
+      // Chat form submission
+      $('#chat-form').on('submit', function(e) {
+        e.preventDefault();
+        
+        const message = $('#chat-input').val().trim();
+        if (!message) return;
+        
+        // Add user message to chat
+        addMessage(message, 'user');
+        
+        // Clear input
+        $('#chat-input').val('');
+        
+        // Get response based on mode
+        if (chatMode === 'general') {
+          sendGeneralChatMessage(message);
+        } else {
+          sendDocumentQuestion(message);
+        }
+      });
+      
+      // Function to load files
+      function loadFiles() {
+        $.ajax({
+          url: '/files',
+          type: 'GET',
+          success: function(files) {
+            const filesList = $('#uploaded-files-list');
+            filesList.empty();
+            
+            if (files.length === 0) {
+              filesList.append('<li class="no-files">No files uploaded yet</li>');
+              return;
+            }
+            
+            files.forEach(file => {
+              filesList.append(`
+                <li class="file-item">
+                  <span class="file-name">${file.filename}</span>
+                  <span class="file-type">${file.contentType}</span>
+                </li>
+              `);
+            });
+            
+            // Update document context
+            if (chatMode === 'document') {
+              getDocumentContext();
+            }
+          },
+          error: function(err) {
+            console.error('Error loading files:', err);
+          }
+        });
+      }
+      
+      // Function to get document context
+      function getDocumentContext() {
+        $.ajax({
+          url: '/files/context',
+          type: 'GET',
+          success: function(data) {
+            documentContext = data.context;
+          },
+          error: function(err) {
+            console.error('Error getting document context:', err);
+          }
+        });
+      }
+      
+      // Function to send a general chat message
+      function sendGeneralChatMessage(message) {
+        $.ajax({
+          url: '/api/chat',
+          type: 'POST',
+          contentType: 'application/json',
+          data: JSON.stringify({
+            message: message,
+            sessionId: sessionId
+          }),
+          success: function(data) {
+            addMessage(data.reply, 'assistant');
+          },
+          error: function(err) {
+            console.error('Chat error:', err);
+            addMessage('Sorry, there was an error processing your message. Please try again.', 'system error');
+          }
+        });
+      }
+      
+      // Function to send a document question
+      function sendDocumentQuestion(question) {
+        if (!documentContext) {
+          addMessage('No documents have been uploaded yet. Please upload a document first or switch to general chat mode.', 'system');
+          return;
+        }
+        
+        $.ajax({
+          url: '/api/ask-document',
+          type: 'POST',
+          contentType: 'application/json',
+          data: JSON.stringify({
+            question: question,
+            context: documentContext,
+            sessionId: sessionId
+          }),
+          success: function(data) {
+            addMessage(data.answer, 'assistant');
+          },
+          error: function(err) {
+            console.error('Document Q&A error:', err);
+            addMessage('Sorry, there was an error processing your question. Please try again.', 'system error');
+          }
+        });
+      }
+      
+      // Function to add a message to the chat
+      function addMessage(content, role) {
+        const chatMessages = $('#chat-messages');
+        chatMessages.append(`
+          <div class="message ${role}">
+            ${content}
+          </div>
+        `);
+        
+        // Scroll to bottom
+        chatMessages.scrollTop(chatMessages[0].scrollHeight);
+      }
+    });
+  </script>
+</body>
+</html>
